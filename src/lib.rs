@@ -17,4 +17,8 @@ mod datadog_reference_tests;
 #[cfg(test)]
 mod serde_tests;
 
+#[cfg(feature = "serde")]
+#[cfg(test)]
+mod size_estimation_tests;
+
 pub use ddsketchy::{DDSketch, DDSketchBuilder, DDSketchError};
