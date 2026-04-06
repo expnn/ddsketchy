@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use ddsketchy::DDSketch;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 
 fn bench_insert(c: &mut Criterion) {
     let mut group = c.benchmark_group("insert_throughput");
