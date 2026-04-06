@@ -1,8 +1,14 @@
 use crate::ddsketchy::{DDSketch as DDSketchInner, DDSketchError};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyType};
+use std::io::Write;
 
 #[pyclass]
+/// A DDSketch for computing quantile estimates on streaming data.
+/// 
+/// DDSketch is a fully-mergeable quantile sketch with relative-error guarantees.
+/// It provides accurate quantile estimates while using minimal memory.
 pub struct DDSketch {
     inner: DDSketchInner,
 }
@@ -17,79 +23,299 @@ impl From<DDSketchError> for PyErr {
 impl DDSketch {
     #[new]
     #[pyo3(signature = (alpha=0.01))]
+    /// Create a new DDSketch instance.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `alpha` - The relative accuracy guarantee for quantile estimates. 
+    ///   Must be in the range (0, 1). Smaller values provide more accurate 
+    ///   estimates but use more memory. Default is 0.01 (1% relative error).
+    /// 
+    /// # Returns
+    /// 
+    /// A new DDSketch instance configured with the specified accuracy.
+    /// 
+    /// # Raises
+    /// 
+    /// * `ValueError` - If alpha is not in the valid range (0, 1).
     fn new(alpha: f64) -> PyResult<Self> {
         let inner = DDSketchInner::new(alpha).map_err(PyErr::from)?;
         Ok(Self { inner })
     }
 
+    /// Add a single value to the sketch.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `value` - The value to add to the sketch. Can be any finite f64 value.
     fn add(&mut self, value: f64) {
         self.inner.add(value);
     }
 
+    /// Add multiple values to the sketch in batch.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `values` - A list of f64 values to add to the sketch.
     fn add_batch(&mut self, values: Vec<f64>) {
         self.inner.add_batch(values);
     }
 
+    /// Estimate the value at the given quantile.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `q` - The quantile to compute, must be in the range [0, 1].
+    ///   For example, 0.5 returns the median, 0.95 returns the 95th percentile.
+    /// 
+    /// # Returns
+    /// 
+    /// The estimated value at the specified quantile.
+    /// 
+    /// # Raises
+    /// 
+    /// * `ValueError` - If the sketch is empty or if q is not in [0, 1].
     fn quantile(&self, q: f64) -> PyResult<f64> {
         self.inner.quantile(q).map_err(PyErr::from)
     }
 
+    /// Merge another DDSketch into this one.
+    /// 
+    /// After merging, this sketch will contain all values from both sketches.
+    /// Both sketches must have the same alpha parameter.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `other` - Another DDSketch instance to merge into this one.
+    /// 
+    /// # Raises
+    /// 
+    /// * `ValueError` - If the sketches have different alpha values.
     fn merge(&mut self, other: &DDSketch) -> PyResult<()> {
         self.inner.merge(&other.inner).map_err(PyErr::from)
     }
 
+    /// The total number of values added to the sketch.
     #[getter]
     fn count(&self) -> u64 {
         self.inner.count()
     }
 
+    /// The sum of all values added to the sketch.
     #[getter]
     fn sum(&self) -> f64 {
         self.inner.sum()
     }
 
+    /// The arithmetic mean of all values added to the sketch.
+    /// 
+    /// Returns 0.0 if the sketch is empty.
     #[getter]
     fn mean(&self) -> f64 {
         self.inner.mean()
     }
 
+    /// The minimum value added to the sketch.
+    /// 
+    /// Returns f64::INFINITY if the sketch is empty.
     #[getter]
     fn min(&self) -> f64 {
         self.inner.min()
     }
 
+    /// The maximum value added to the sketch.
+    /// 
+    /// Returns -f64::INFINITY if the sketch is empty.
     #[getter]
     fn max(&self) -> f64 {
         self.inner.max()
     }
 
+    /// The relative accuracy parameter (alpha) of the sketch.
     #[getter]
     fn alpha(&self) -> f64 {
         self.inner.alpha()
     }
 
+    /// Check if the sketch is empty (contains no values).
+    /// 
+    /// # Returns
+    /// 
+    /// True if no values have been added to the sketch, False otherwise.
     fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
 
+    /// Clear all values from the sketch, resetting it to an empty state.
+    /// 
+    /// The sketch retains its alpha parameter configuration.
     fn clear(&mut self) {
         self.inner.clear();
     }
 
+    /// Compute commonly used percentiles (P50, P90, P95, P99).
+    /// 
+    /// # Returns
+    /// 
+    /// A tuple of (p50, p90, p95, p99) if the sketch is not empty, or None if empty.
+    /// - p50: 50th percentile (median)
+    /// - p90: 90th percentile
+    /// - p95: 95th percentile
+    /// - p99: 99th percentile
     fn percentiles(&self) -> Option<(f64, f64, f64, f64)> {
         self.inner.percentiles()
     }
 
+    /// Return the number of unique bins in the sketch.
+    /// 
+    /// This is used by Python's len() function.
     fn __len__(&self) -> usize {
         self.inner.len()
     }
 
+    /// Return a string representation of the DDSketch.
+    /// 
+    /// Used by Python's repr() function.
     fn __repr__(&self) -> String {
         format!("{}", self.inner)
     }
 
+    /// Return a string representation of the DDSketch.
+    /// 
+    /// Used by Python's str() function.
     fn __str__(&self) -> String {
         format!("{}", self.inner)
+    }
+
+    /// Serialize the DDSketch to bytes using bincode format.
+    /// 
+    /// This method uses zero-copy serialization directly into Python's memory buffer,
+    /// eliminating intermediate allocations for better performance.
+    /// 
+    /// # Returns
+    /// 
+    /// A bytes object containing the serialized DDSketch data.
+    /// 
+    /// # Raises
+    /// 
+    /// * `ValueError` - If serialization fails.
+    /// 
+    /// # Example
+    /// 
+    /// ```python
+    /// sketch = DDSketch()
+    /// sketch.add(1.0)
+    /// data = sketch.dumps()
+    /// # Later, deserialize with DDSketch.loads(data)
+    /// ```
+    fn dumps(&self, py: Python<'_>) -> PyResult<Py<PyBytes>> {
+        // Use new_with_writer to allocate Python bytes buffer and serialize directly into it
+        // We use 0 as initial capacity, the writer will grow as needed
+        let py_bytes = PyBytes::new_with_writer(py, 0, |writer| {
+            bincode::serialize_into(writer, &self.inner)
+                .map_err(|e| PyValueError::new_err(format!("Serialization failed: {}", e)))
+        })?;
+        
+        Ok(py_bytes.into())
+    }
+
+    /// Serialize the DDSketch and write to a file-like object.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `fp` - A file-like object with a write() method that accepts bytes.
+    /// 
+    /// # Raises
+    /// 
+    /// * `ValueError` - If serialization fails or if the write is incomplete.
+    /// 
+    /// # Example
+    /// 
+    /// ```python
+    /// sketch = DDSketch()
+    /// sketch.add(1.0)
+    /// with open('sketch.bin', 'wb') as f:
+    ///     sketch.dump(f)
+    /// ```
+    fn dump(&self, fp: &Bound<'_, PyAny>) -> PyResult<()> {
+        let bytes = bincode::serialize(&self.inner)
+            .map_err(|e| PyValueError::new_err(format!("Serialization failed: {}", e)))?;
+        
+        // Call the write method on the Python object
+        let result = fp.call_method1("write", (bytes.as_slice(),))?;
+        
+        // Optionally check that all bytes were written
+        let bytes_written: usize = result.extract()?;
+        if bytes_written != bytes.len() {
+            return Err(PyValueError::new_err(format!(
+                "Incomplete write: expected {} bytes, wrote {} bytes",
+                bytes.len(),
+                bytes_written
+            )));
+        }
+        
+        Ok(())
+    }
+
+    /// Deserialize a DDSketch from bytes.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `data` - A bytes object containing serialized DDSketch data.
+    /// 
+    /// # Returns
+    /// 
+    /// A new DDSketch instance with the deserialized data.
+    /// 
+    /// # Raises
+    /// 
+    /// * `ValueError` - If deserialization fails or the data is invalid.
+    /// 
+    /// # Example
+    /// 
+    /// ```python
+    /// sketch = DDSketch()
+    /// sketch.add(1.0)
+    /// data = sketch.dumps()
+    /// restored = DDSketch.loads(data)
+    /// ```
+    #[classmethod]
+    fn loads(_cls: &Bound<'_, PyType>, data: &[u8]) -> PyResult<Self> {
+        let inner: DDSketchInner = bincode::deserialize(data)
+            .map_err(|e| PyValueError::new_err(format!("Deserialization failed: {}", e)))?;
+        Ok(Self { inner })
+    }
+
+    /// Deserialize a DDSketch from a file-like object.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `fp` - A file-like object with a read() method that returns bytes.
+    /// 
+    /// # Returns
+    /// 
+    /// A new DDSketch instance with the deserialized data.
+    /// 
+    /// # Raises
+    /// 
+    /// * `ValueError` - If deserialization fails or the data is invalid.
+    /// 
+    /// # Example
+    /// 
+    /// ```python
+    /// with open('sketch.bin', 'rb') as f:
+    ///     sketch = DDSketch.load(f)
+    /// ```
+    #[classmethod]
+    fn load(_cls: &Bound<'_, PyType>, fp: &Bound<'_, PyAny>) -> PyResult<Self> {
+        // Read all data from the file-like object
+        // We'll use read() with no arguments to read all bytes
+        let bytes_obj = fp.call_method0("read")?;
+        let bytes: &[u8] = bytes_obj.extract()?;
+        
+        let inner: DDSketchInner = bincode::deserialize(bytes)
+            .map_err(|e| PyValueError::new_err(format!("Deserialization failed: {}", e)))?;
+        Ok(Self { inner })
     }
 }
 

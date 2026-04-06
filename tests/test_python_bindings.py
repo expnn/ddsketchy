@@ -1,5 +1,7 @@
 import unittest
-import math
+import io
+import tempfile
+import os
 from ddsketchy import DDSketch
 
 
@@ -190,9 +192,186 @@ class TestDDSketchAccuracy(unittest.TestCase):
             estimated = sketch.quantile(q)
             actual = values[int(q * (len(values) - 1))]
             relative_error = abs(estimated - actual) / actual
-            self.assertLessEqual(relative_error, alpha,
-                f"Relative error {relative_error} exceeds alpha {alpha} at quantile {q}")
+            self.assertLessEqual(
+                relative_error,
+                alpha,
+                f"Relative error {relative_error} exceeds alpha {alpha} at quantile {q}",
+            )
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDDSketchSerialization(unittest.TestCase):
+    def test_dumps_loads_roundtrip(self):
+        """Test serialization to bytes and deserialization back."""
+        sketch = DDSketch(alpha=0.01)
+        sketch.add_batch([1.0, 2.0, 3.0, 4.0, 5.0])
+
+        # Serialize to bytes
+        data = sketch.dumps()
+
+        # Verify it's bytes
+        self.assertIsInstance(data, bytes)
+        self.assertGreater(len(data), 0)
+
+        # Deserialize back
+        restored = DDSketch.loads(data)
+
+        # Verify equality
+        self.assertEqual(sketch.count, restored.count)
+        self.assertAlmostEqual(sketch.sum, restored.sum, places=10)
+        self.assertAlmostEqual(sketch.min, restored.min, delta=0.1)
+        self.assertAlmostEqual(sketch.max, restored.max, delta=0.1)
+        self.assertAlmostEqual(sketch.alpha, restored.alpha, places=10)
+
+        # Verify quantiles match
+        for q in [0.1, 0.5, 0.9]:
+            self.assertAlmostEqual(sketch.quantile(q), restored.quantile(q), delta=0.1)
+
+    def test_dumps_empty_sketch(self):
+        """Test serializing an empty sketch."""
+        sketch = DDSketch()
+        data = sketch.dumps()
+        restored = DDSketch.loads(data)
+
+        self.assertEqual(restored.count, 0)
+        self.assertTrue(restored.is_empty())
+        self.assertAlmostEqual(restored.alpha, 0.01, places=10)
+
+    def test_dump_load_file(self):
+        """Test serialization to file and deserialization from file."""
+        sketch = DDSketch(alpha=0.02)
+        sketch.add_batch([10.0, 20.0, 30.0, 40.0, 50.0])
+
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(mode="wb", delete=False) as f:
+            temp_path = f.name
+
+        try:
+            # Write to file
+            with open(temp_path, "wb") as f:
+                sketch.dump(f)
+
+            # Read from file
+            with open(temp_path, "rb") as f:
+                restored = DDSketch.load(f)
+
+            # Verify equality
+            self.assertEqual(sketch.count, restored.count)
+            self.assertAlmostEqual(sketch.sum, restored.sum, places=10)
+            self.assertAlmostEqual(sketch.alpha, restored.alpha, places=10)
+
+            # Verify quantiles
+            for q in [0.25, 0.5, 0.75]:
+                self.assertAlmostEqual(
+                    sketch.quantile(q), restored.quantile(q), delta=0.5
+                )
+        finally:
+            # Clean up
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+    def test_dump_load_bytesio(self):
+        """Test serialization to BytesIO and deserialization."""
+        sketch = DDSketch()
+        sketch.add_batch([-10.0, -5.0, 0.0, 5.0, 10.0])
+
+        # Serialize to BytesIO
+        buffer = io.BytesIO()
+        sketch.dump(buffer)
+
+        # Reset buffer position
+        buffer.seek(0)
+
+        # Deserialize from BytesIO
+        restored = DDSketch.load(buffer)
+
+        # Verify equality
+        self.assertEqual(sketch.count, restored.count)
+        self.assertAlmostEqual(sketch.sum, restored.sum, places=10)
+        self.assertAlmostEqual(sketch.alpha, restored.alpha, places=10)
+
+    def test_serialization_preserves_negative_values(self):
+        """Test that negative values are correctly preserved."""
+        sketch = DDSketch()
+        sketch.add_batch([-100.0, -50.0, -10.0, 0.0, 10.0, 50.0, 100.0])
+
+        data = sketch.dumps()
+        restored = DDSketch.loads(data)
+
+        self.assertEqual(sketch.count, restored.count)
+        self.assertAlmostEqual(sketch.sum, restored.sum, places=10)
+
+        # Check quantiles for negative values
+        for q in [0.1, 0.5, 0.9]:
+            orig_q = sketch.quantile(q)
+            rest_q = restored.quantile(q)
+            self.assertAlmostEqual(orig_q, rest_q, delta=1.0)
+
+    def test_serialization_with_large_dataset(self):
+        """Test serialization with a larger dataset."""
+        sketch = DDSketch(alpha=0.01)
+        sketch.add_batch([float(i) for i in range(1, 10001)])
+
+        data = sketch.dumps()
+        restored = DDSketch.loads(data)
+
+        self.assertEqual(sketch.count, restored.count)
+        self.assertAlmostEqual(sketch.sum, restored.sum, places=5)
+
+        # Test multiple quantiles with tolerance
+        for q in [0.25, 0.5, 0.75, 0.9, 0.95, 0.99]:
+            orig_q = sketch.quantile(q)
+            rest_q = restored.quantile(q)
+            # Allow 1% relative error (matching alpha)
+            relative_error = (
+                abs(orig_q - rest_q) / orig_q if orig_q != 0 else abs(orig_q - rest_q)
+            )
+            self.assertLessEqual(relative_error, 0.02)
+
+    def test_dump_incomplete_write(self):
+        """Test that incomplete writes raise an error."""
+        sketch = DDSketch()
+        sketch.add(1.0)
+
+        # Create a mock file object that reports incomplete write
+        class IncompleteFile:
+            def write(self, data):
+                return 0  # Report 0 bytes written
+
+        with self.assertRaises(ValueError) as context:
+            sketch.dump(IncompleteFile())
+
+        self.assertIn("Incomplete write", str(context.exception))
+
+    def test_loads_invalid_data(self):
+        """Test that invalid data raises an error."""
+        with self.assertRaises(ValueError) as context:
+            DDSketch.loads(b"invalid data")
+
+        self.assertIn("Deserialization failed", str(context.exception))
+
+    def test_load_empty_file(self):
+        """Test that loading from empty file raises an error."""
+        buffer = io.BytesIO()
+
+        with self.assertRaises(ValueError):
+            DDSketch.load(buffer)
+
+    def test_serialization_after_merge(self):
+        """Test serializing a merged sketch."""
+        sketch1 = DDSketch()
+        sketch2 = DDSketch()
+
+        sketch1.add_batch([1.0, 2.0, 3.0])
+        sketch2.add_batch([4.0, 5.0, 6.0])
+
+        sketch1.merge(sketch2)
+
+        data = sketch1.dumps()
+        restored = DDSketch.loads(data)
+
+        self.assertEqual(restored.count, 6)
+        self.assertAlmostEqual(restored.sum, 21.0, places=10)
