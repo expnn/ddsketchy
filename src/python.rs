@@ -4,7 +4,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyType};
 
-#[pyclass]
+#[pyclass(module = "ddsketchy")]
 /// A DDSketch for computing quantile estimates on streaming data.
 ///
 /// DDSketch is a fully-mergeable quantile sketch with relative-error guarantees.
@@ -386,6 +386,20 @@ impl DDSketch {
         let inner: DDSketchInner = bincode::deserialize(bytes)
             .map_err(|e| PyValueError::new_err(format!("Deserialization failed: {}", e)))?;
         Ok(Self { inner })
+    }
+
+    fn __getstate__(&self) -> PyResult<Vec<u8>> {
+        // Serialize Rust struct to bytes using bincode
+        Ok(bincode::serialize(&self.inner)
+            .map_err(|e| PyValueError::new_err(format!("Serialization failed: {}", e)))?)
+    }
+
+    fn __setstate__(&mut self, state: Vec<u8>) -> PyResult<()> {
+        // Deserialize bytes back into the current struct
+        let inner: DDSketchInner = bincode::deserialize(&state)
+            .map_err(|e| PyValueError::new_err(format!("Deserialization failed: {}", e)))?;
+        self.inner = inner;
+        Ok(())
     }
 }
 

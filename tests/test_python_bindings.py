@@ -375,3 +375,168 @@ class TestDDSketchSerialization(unittest.TestCase):
 
         self.assertEqual(restored.count, 6)
         self.assertAlmostEqual(restored.sum, 21.0, places=10)
+
+
+class TestDDSketchPickle(unittest.TestCase):
+    def test_pickle_roundtrip(self):
+        """Test basic pickle serialization and deserialization."""
+        import pickle
+
+        sketch = DDSketch(alpha=0.01)
+        sketch.add_batch([1.0, 2.0, 3.0, 4.0, 5.0])
+
+        # Pickle and unpickle
+        pickled = pickle.dumps(sketch)
+        restored = pickle.loads(pickled)
+
+        # Verify equality
+        self.assertEqual(sketch.count, restored.count)
+        self.assertAlmostEqual(sketch.sum, restored.sum, places=10)
+        self.assertAlmostEqual(sketch.min, restored.min, delta=0.1)
+        self.assertAlmostEqual(sketch.max, restored.max, delta=0.1)
+        self.assertAlmostEqual(sketch.alpha, restored.alpha, places=10)
+
+        # Verify quantiles match
+        for q in [0.1, 0.5, 0.9]:
+            self.assertAlmostEqual(sketch.quantile(q), restored.quantile(q), delta=0.1)
+
+    def test_pickle_empty_sketch(self):
+        """Test pickling an empty sketch."""
+        import pickle
+
+        sketch = DDSketch()
+        pickled = pickle.dumps(sketch)
+        restored = pickle.loads(pickled)
+
+        self.assertEqual(restored.count, 0)
+        self.assertTrue(restored.is_empty())
+        self.assertAlmostEqual(restored.alpha, 0.01, places=10)
+
+    def test_pickle_with_negative_values(self):
+        """Test pickling sketch with negative values."""
+        import pickle
+
+        sketch = DDSketch()
+        sketch.add_batch([-100.0, -50.0, -10.0, 0.0, 10.0, 50.0, 100.0])
+
+        pickled = pickle.dumps(sketch)
+        restored = pickle.loads(pickled)
+
+        self.assertEqual(sketch.count, restored.count)
+        self.assertAlmostEqual(sketch.sum, restored.sum, places=10)
+
+        # Check quantiles for negative values
+        for q in [0.1, 0.5, 0.9]:
+            orig_q = sketch.quantile(q)
+            rest_q = restored.quantile(q)
+            self.assertAlmostEqual(orig_q, rest_q, delta=1.0)
+
+    def test_pickle_after_merge(self):
+        """Test pickling a merged sketch."""
+        import pickle
+
+        sketch1 = DDSketch()
+        sketch2 = DDSketch()
+
+        sketch1.add_batch([1.0, 2.0, 3.0])
+        sketch2.add_batch([4.0, 5.0, 6.0])
+
+        sketch1.merge(sketch2)
+
+        pickled = pickle.dumps(sketch1)
+        restored = pickle.loads(pickled)
+
+        self.assertEqual(restored.count, 6)
+        self.assertAlmostEqual(restored.sum, 21.0, places=10)
+
+    def test_pickle_large_dataset(self):
+        """Test pickling with a larger dataset."""
+        import pickle
+
+        sketch = DDSketch(alpha=0.01)
+        sketch.add_batch([float(i) for i in range(1, 10001)])
+
+        pickled = pickle.dumps(sketch)
+        restored = pickle.loads(pickled)
+
+        self.assertEqual(sketch.count, restored.count)
+        self.assertAlmostEqual(sketch.sum, restored.sum, places=5)
+
+        # Test multiple quantiles with tolerance
+        for q in [0.25, 0.5, 0.75, 0.9, 0.95, 0.99]:
+            orig_q = sketch.quantile(q)
+            rest_q = restored.quantile(q)
+            # Allow 1% relative error (matching alpha)
+            relative_error = (
+                abs(orig_q - rest_q) / orig_q if orig_q != 0 else abs(orig_q - rest_q)
+            )
+            self.assertLessEqual(relative_error, 0.02)
+
+    def test_pickle_protocols(self):
+        """Test different pickle protocols."""
+        import pickle
+
+        sketch = DDSketch()
+        sketch.add_batch([1.0, 2.0, 3.0, 4.0, 5.0])
+
+        # Test protocols 2 and above (protocol 0 and 1 have limitations with PyO3)
+        for protocol in range(2, pickle.HIGHEST_PROTOCOL + 1):
+            pickled = pickle.dumps(sketch, protocol=protocol)
+            restored = pickle.loads(pickled)
+
+            self.assertEqual(sketch.count, restored.count)
+            self.assertAlmostEqual(sketch.sum, restored.sum, places=10)
+
+    def test_pickle_file_roundtrip(self):
+        """Test pickling to file and loading back."""
+        import pickle
+
+        sketch = DDSketch(alpha=0.02)
+        sketch.add_batch([10.0, 20.0, 30.0, 40.0, 50.0])
+
+        with tempfile.NamedTemporaryFile(mode="wb", delete=False) as f:
+            temp_path = f.name
+
+        try:
+            # Pickle to file
+            with open(temp_path, "wb") as f:
+                pickle.dump(sketch, f)
+
+            # Unpickle from file
+            with open(temp_path, "rb") as f:
+                restored = pickle.load(f)
+
+            # Verify equality
+            self.assertEqual(sketch.count, restored.count)
+            self.assertAlmostEqual(sketch.sum, restored.sum, places=10)
+            self.assertAlmostEqual(sketch.alpha, restored.alpha, places=10)
+
+            # Verify quantiles
+            for q in [0.25, 0.5, 0.75]:
+                self.assertAlmostEqual(
+                    sketch.quantile(q), restored.quantile(q), delta=0.5
+                )
+        finally:
+            # Clean up
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+    def test_pickle_copy(self):
+        """Test using pickle for deep copy."""
+        import pickle
+        import copy
+
+        sketch = DDSketch()
+        sketch.add_batch([1.0, 2.0, 3.0])
+
+        # Use copy.deepcopy which uses pickle internally
+        copied = copy.deepcopy(sketch)
+
+        # Verify they are equal
+        self.assertEqual(sketch.count, copied.count)
+        self.assertAlmostEqual(sketch.sum, copied.sum, places=10)
+
+        # Verify they are independent
+        sketch.add(100.0)
+        self.assertEqual(sketch.count, 4)
+        self.assertEqual(copied.count, 3)
