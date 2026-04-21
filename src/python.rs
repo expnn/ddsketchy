@@ -108,22 +108,87 @@ impl DDSketch {
         Ok(())
     }
 
-    /// Estimate the value at the given quantile.
+    /// Estimate the value(s) at the given quantile(s).
+    ///
+    /// This method accepts either a single quantile value or a collection of
+    /// quantile values, and returns the corresponding estimated value(s).
+    ///
+    /// # Single Quantile
+    ///
+    /// When called with a single float, returns a single float result:
+    ///
+    /// ```python
+    /// sketch = DDSketch()
+    /// sketch.add_batch(range(1, 1001))
+    /// median = sketch.quantile(0.5)  # Returns: float
+    /// ```
+    ///
+    /// # Batch Quantiles
+    ///
+    /// When called with an iterable (list, tuple, or NumPy array), returns a
+    /// list of results:
+    ///
+    /// ```python
+    /// # Using a Python list
+    /// results = sketch.quantile([0.5, 0.9, 0.95, 0.99])  # Returns: List[float]
+    ///
+    /// # Using NumPy array (zero-copy, faster)
+    /// import numpy as np
+    /// results = sketch.quantile(np.array([0.5, 0.9, 0.95, 0.99]))  # Returns: List[float]
+    /// ```
+    ///
+    /// For batch mode, this method accepts any Python iterable, including:
+    /// - Python lists and tuples
+    /// - NumPy arrays (zero-copy for contiguous arrays)
+    /// - Generators and other iterators
+    ///
+    /// For best performance with large datasets, use NumPy arrays.
+    /// Contiguous NumPy arrays use true zero-copy access, avoiding any
+    /// data copying or intermediate allocations.
     ///
     /// # Arguments
     ///
-    /// * `q` - The quantile to compute, must be in the range [0, 1].
-    ///   For example, 0.5 returns the median, 0.95 returns the 95th percentile.
+    /// * `q` - Either a single quantile value (float in [0, 1]) or an iterable
+    ///   of quantile values (each in [0, 1]).
     ///
     /// # Returns
     ///
-    /// The estimated value at the specified quantile.
+    /// - If `q` is a single float: returns the estimated value (float)
+    /// - If `q` is an iterable: returns a list of estimated values
     ///
     /// # Raises
     ///
-    /// * `ValueError` - If the sketch is empty or if q is not in [0, 1].
-    fn quantile(&self, q: f64) -> PyResult<f64> {
-        self.inner.quantile(q).map_err(PyErr::from)
+    /// * `ValueError` - If any quantile is not in [0, 1] or if values cannot be
+    ///   iterated or converted to f64.
+    fn quantile<'py>(&self, py: Python<'py>, q: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+        // Batch mode: try to extract as numpy array (zero-copy) first
+        if let Ok(arr) = q.extract::<PyReadonlyArray1<f64>>() {
+            let view = arr.as_array();
+
+            // Check if we can get a contiguous slice
+            return if let Some(slice) = view.as_slice() {
+                // True zero-copy: pass slice directly, no copying at all
+                let results = self.inner.quantile_batch(slice).map_err(PyErr::from)?;
+                Ok(results.into_pyobject(py)?.into_any())
+            } else {
+                // Non-contiguous array: iterate directly without intermediate Vec
+                let results = self
+                    .inner
+                    .quantile_batch(view.iter().map(|&x| x))
+                    .map_err(PyErr::from)?;
+                Ok(results.into_pyobject(py)?.into_any())
+            }
+        } else if let Ok(q_value) = q.extract::<f64>() {
+            // Try to extract as a single f64 first
+            // Single quantile mode
+            let result = self.inner.quantile(q_value).map_err(PyErr::from)?;
+            return Ok(result.into_pyobject(py)?.into_any());
+        }
+
+        // Fallback path: Extract as Vec<f64> (requires copying from Python list)
+        let quantiles_vec: Vec<f64> = q.extract()?;
+        let results = self.inner.quantile_batch(&quantiles_vec).map_err(PyErr::from)?;
+        Ok(results.into_pyobject(py)?.into_any())
     }
 
     /// Merge another DDSketch into this one.

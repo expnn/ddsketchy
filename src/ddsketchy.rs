@@ -552,6 +552,22 @@ impl DDSketch {
             self.add(value);
         }
     }
+
+    /// Compute quantile estimates for multiple quantile values in batch.
+    ///
+    /// # Arguments
+    /// * `quantiles` - An iterable of quantile values, each must be in range [0.0, 1.0]
+    ///
+    /// # Returns
+    /// * `Ok(Vec<f64>)` - A vector of estimated values at the specified quantiles
+    /// * `Err(DDSketchError)` - If any quantile is outside [0.0, 1.0]
+    pub fn quantile_batch<I>(&self, quantiles: I) -> Result<Vec<f64>, DDSketchError>
+    where
+        I: IntoIterator,
+        I::Item: std::borrow::Borrow<f64>,
+    {
+        quantiles.into_iter().map(|q| self.quantile(*q.borrow())).collect()
+    }
 }
 
 // Implement Default for convenience
