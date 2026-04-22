@@ -324,7 +324,9 @@ impl DDSketch {
     /// Returns the alpha (relative error) parameter used to create this sketch
     #[inline]
     pub fn alpha(&self) -> f64 {
-        (self.gamma - 1.0) / (self.gamma + 1.0)
+        // (self.gamma - 1.0) / (self.gamma + 1.0)
+        debug_assert_eq!(self.alpha, (self.gamma - 1.0) / (self.gamma + 1.0));
+        self.alpha
     }
 
     /// Clears all data from the sketch, resetting it to empty state
@@ -567,6 +569,23 @@ impl DDSketch {
         I::Item: std::borrow::Borrow<f64>,
     {
         quantiles.into_iter().map(|q| self.quantile(*q.borrow())).collect()
+    }
+
+    /// Collect raw statistics for the given store (positive or negative)
+    pub fn collect_raw_statistics(&self, positive: bool) -> (Vec<f64>, Vec<u64>, f64) {
+        let store = if positive {
+            &self.positive_store
+        } else {
+            &self.negative_store
+        };
+
+        let offset = store.offset;
+        let counts = store.bins.clone();
+
+        let left_edges = (0..counts.len())
+            .map(|i| self.value(i as i32 + offset))
+            .collect();
+        (left_edges, counts, self.alpha)
     }
 }
 

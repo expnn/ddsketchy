@@ -1,5 +1,5 @@
 use crate::ddsketchy::{DDSketch as DDSketchInner, DDSketchError};
-use numpy::PyReadonlyArray1;
+use numpy::{PyReadonlyArray1, PyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyType};
@@ -465,6 +465,28 @@ impl DDSketch {
             .map_err(|e| PyValueError::new_err(format!("Deserialization failed: {}", e)))?;
         self.inner = inner;
         Ok(())
+    }
+
+    #[pyo3(signature = (positive=true))]
+    /// Collect raw statistics for the given store (positive or negative)
+    ///
+    /// # Arguments
+    ///
+    /// * `positive` - If true, collect statistics for positive values (default). If false, collect statistics for negative values.
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing:
+    /// - An array of left edges of bins
+    /// - An array of counts for each bin
+    /// - The alpha parameter (relative error) of the sketch
+    fn collect_raw_statistics<'py>(&self, py: Python<'py>, positive: bool)
+        -> PyResult<(Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<u64>>, f64)>
+    {
+        let (left_edges, counts, alpha) = self.inner.collect_raw_statistics(positive);
+        let left_edges = PyArray1::from_vec(py, left_edges);
+        let counts = PyArray1::from_vec(py, counts);
+        Ok((left_edges, counts, alpha))
     }
 }
 

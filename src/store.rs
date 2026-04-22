@@ -7,11 +7,11 @@ fn div_ceil(dividend: i32, divisor: i32) -> i32 {
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Store {
-    bins: Vec<u64>,
-    count: u64,
+    pub(crate) bins: Vec<u64>,
+    pub(crate) count: u64,
     min_key: i32,
     max_key: i32,
-    offset: i32,
+    pub(crate) offset: i32,
     bin_limit: usize,
     is_collapsed: bool,
 }

@@ -199,6 +199,144 @@ class TestDDSketchAccuracy(unittest.TestCase):
             )
 
 
+class TestDDSketchCollectRawStatistics(unittest.TestCase):
+    """Tests for the collect_raw_statistics method.
+    
+    This method returns raw bin data from the sketch, including:
+    - left_edges: The left boundary values of each bin
+    - counts: The count of values in each bin
+    - alpha: The relative accuracy parameter
+    
+    Note: DDSketch stores negative values as their absolute values in the 
+    negative store, so left_edges will always be positive.
+    """
+    
+    def test_collect_raw_statistics_positive_values(self):
+        """Test collecting raw statistics for positive values."""
+        sketch = DDSketch(alpha=0.01)
+        sketch.add_batch([1.0, 2.0, 3.0, 4.0, 5.0])
+        
+        left_edges, counts, alpha = sketch.collect_raw_statistics(positive=True)
+        
+        # Verify alpha is correct
+        self.assertAlmostEqual(alpha, 0.01, places=10)
+        
+        # Verify we got arrays
+        self.assertGreater(len(left_edges), 0)
+        self.assertEqual(len(left_edges), len(counts))
+        
+        # Verify total count matches
+        total_count = sum(counts)
+        self.assertEqual(total_count, sketch.count)
+        
+        # Verify left edges are positive and sorted
+        for edge in left_edges:
+            self.assertGreater(edge, 0)
+        for i in range(len(left_edges) - 1):
+            self.assertLessEqual(left_edges[i], left_edges[i + 1])
+    
+    def test_collect_raw_statistics_negative_values(self):
+        """Test collecting raw statistics for negative values."""
+        sketch = DDSketch(alpha=0.01)
+        sketch.add_batch([-5.0, -4.0, -3.0, -2.0, -1.0])
+        
+        left_edges, counts, alpha = sketch.collect_raw_statistics(positive=False)
+        
+        # Verify alpha is correct
+        self.assertAlmostEqual(alpha, 0.01, places=10)
+        
+        # Verify we got arrays
+        self.assertGreater(len(left_edges), 0)
+        self.assertEqual(len(left_edges), len(counts))
+        
+        # Verify total count matches
+        total_count = sum(counts)
+        self.assertEqual(total_count, sketch.count)
+        
+        # Note: DDSketch stores negative values as their absolute values in the negative store
+        # So left_edges will be positive values representing the magnitude
+        for edge in left_edges:
+            self.assertGreater(edge, 0)
+        # Verify edges are sorted
+        for i in range(len(left_edges) - 1):
+            self.assertLessEqual(left_edges[i], left_edges[i + 1])
+    
+    def test_collect_raw_statistics_mixed_values(self):
+        """Test collecting raw statistics for mixed positive and negative values."""
+        sketch = DDSketch(alpha=0.01)
+        sketch.add_batch([-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0])
+        
+        # Test positive store
+        pos_edges, pos_counts, pos_alpha = sketch.collect_raw_statistics(positive=True)
+        self.assertAlmostEqual(pos_alpha, 0.01, places=10)
+        pos_total = sum(pos_counts)
+        # Should have 3 positive values (1.0, 2.0, 3.0)
+        self.assertEqual(pos_total, 3)
+        
+        # Test negative store
+        neg_edges, neg_counts, neg_alpha = sketch.collect_raw_statistics(positive=False)
+        self.assertAlmostEqual(neg_alpha, 0.01, places=10)
+        neg_total = sum(neg_counts)
+        # Should have 3 negative values (-1.0, -2.0, -3.0)
+        self.assertEqual(neg_total, 3)
+    
+    def test_collect_raw_statistics_empty_sketch(self):
+        """Test collecting raw statistics from an empty sketch."""
+        sketch = DDSketch(alpha=0.01)
+        
+        left_edges, counts, alpha = sketch.collect_raw_statistics(positive=True)
+        
+        # Should return empty arrays
+        self.assertEqual(len(left_edges), 0)
+        self.assertEqual(len(counts), 0)
+        self.assertAlmostEqual(alpha, 0.01, places=10)
+    
+    def test_collect_raw_statistics_with_duplicates(self):
+        """Test collecting raw statistics with duplicate values."""
+        sketch = DDSketch(alpha=0.01)
+        sketch.add_batch([1.0, 1.0, 1.0, 2.0, 2.0, 3.0])
+        
+        left_edges, counts, alpha = sketch.collect_raw_statistics(positive=True)
+        
+        # Verify total count
+        total_count = sum(counts)
+        self.assertEqual(total_count, 6)
+        
+        # Verify alpha
+        self.assertAlmostEqual(alpha, 0.01, places=10)
+    
+    def test_collect_raw_statistics_large_dataset(self):
+        """Test collecting raw statistics with a large dataset."""
+        sketch = DDSketch(alpha=0.01)
+        sketch.add_batch([float(i) for i in range(1, 1001)])
+        
+        left_edges, counts, alpha = sketch.collect_raw_statistics(positive=True)
+        
+        # Verify total count
+        total_count = sum(counts)
+        self.assertEqual(total_count, 1000)
+        
+        # Verify alpha
+        self.assertAlmostEqual(alpha, 0.01, places=10)
+        
+        # Verify arrays are not empty
+        self.assertGreater(len(left_edges), 0)
+        self.assertEqual(len(left_edges), len(counts))
+    
+    def test_collect_raw_statistics_default_positive(self):
+        """Test that default parameter is positive=True."""
+        sketch = DDSketch(alpha=0.01)
+        sketch.add_batch([1.0, 2.0, 3.0])
+        
+        # Call without explicit positive parameter
+        left_edges, counts, alpha = sketch.collect_raw_statistics()
+        
+        # Should collect positive statistics by default
+        self.assertGreater(len(left_edges), 0)
+        total_count = sum(counts)
+        self.assertEqual(total_count, 3)
+
+
 if __name__ == "__main__":
     unittest.main()
 
