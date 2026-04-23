@@ -24,16 +24,16 @@ class TestQuantileUnified(unittest.TestCase):
         sketch = DDSketch()
         sketch.add_batch(range(1, 1001))
         
-        # Batch quantile should return a list
+        # Batch quantile should return a numpy array
         quantiles = [0.5, 0.9, 0.95, 0.99]
         results = sketch.quantile(quantiles)
         
-        self.assertIsInstance(results, list)
+        self.assertIsInstance(results, np.ndarray)
         self.assertEqual(len(results), 4)
         
         # Each result should be a float
         for result in results:
-            self.assertIsInstance(result, float)
+            self.assertIsInstance(result, (float, np.floating))
         
         # Results should be monotonically increasing
         for i in range(len(results) - 1):
@@ -48,7 +48,7 @@ class TestQuantileUnified(unittest.TestCase):
         quantiles = np.array([0.25, 0.5, 0.75, 0.9, 0.95])
         results = sketch.quantile(quantiles)
         
-        self.assertIsInstance(results, list)
+        self.assertIsInstance(results, np.ndarray)
         self.assertEqual(len(results), 5)
         
         # Results should be monotonically increasing
@@ -65,7 +65,7 @@ class TestQuantileUnified(unittest.TestCase):
         non_contiguous = all_quantiles[::2]  # [0.1, 0.3, 0.5, 0.7, 0.9]
         
         results = sketch.quantile(non_contiguous)
-        self.assertIsInstance(results, list)
+        self.assertIsInstance(results, np.ndarray)
         self.assertEqual(len(results), 5)
         
         # Results should be monotonically increasing
@@ -127,6 +127,7 @@ class TestQuantileUnified(unittest.TestCase):
         quantiles = [0.25, 0.5, 0.75]
         results = sketch.quantile(quantiles)
         
+        self.assertIsInstance(results, np.ndarray)
         self.assertEqual(len(results), 3)
         for result in results:
             self.assertEqual(result, 0.0)
@@ -184,9 +185,9 @@ class TestQuantileUnified(unittest.TestCase):
         sketch = DDSketch()
         sketch.add_batch([1.0, 2.0, 3.0, 4.0, 5.0])
         
-        # Single element list should return a list
+        # Single element list should return a numpy array
         results = sketch.quantile([0.5])
-        self.assertIsInstance(results, list)
+        self.assertIsInstance(results, np.ndarray)
         self.assertEqual(len(results), 1)
         
         # Should match individual quantile call
@@ -214,7 +215,7 @@ class TestQuantileUnified(unittest.TestCase):
         quantiles = (0.25, 0.5, 0.75)
         results = sketch.quantile(quantiles)
         
-        self.assertIsInstance(results, list)
+        self.assertIsInstance(results, np.ndarray)
         self.assertEqual(len(results), 3)
 
     def test_quantile_large_batch(self):
@@ -237,7 +238,7 @@ class TestQuantileUnified(unittest.TestCase):
             self.assertLessEqual(results[i], results[i + 1])
 
     def test_quantile_return_type_distinction(self):
-        """Test that single float returns float, list returns list."""
+        """Test that single float returns float, iterable returns ndarray."""
         sketch = DDSketch()
         sketch.add_batch([1.0, 2.0, 3.0])
         
@@ -245,19 +246,18 @@ class TestQuantileUnified(unittest.TestCase):
         single_result = sketch.quantile(0.5)
         self.assertIsInstance(single_result, float)
         
-        # List should return list
+        # List should return numpy array
         batch_result = sketch.quantile([0.5])
-        self.assertIsInstance(batch_result, list)
+        self.assertIsInstance(batch_result, np.ndarray)
         
-        # NumPy array with single element now returns list (improved behavior)
-        # It goes through the NumPy path first, which treats it as a batch
+        # NumPy array with single element returns numpy array
         numpy_single = sketch.quantile(np.array([0.5]))
-        self.assertIsInstance(numpy_single, list)
+        self.assertIsInstance(numpy_single, np.ndarray)
         self.assertEqual(len(numpy_single), 1)
         
-        # NumPy array with multiple elements returns list
+        # NumPy array with multiple elements returns numpy array
         numpy_multi = sketch.quantile(np.array([0.3, 0.5, 0.7]))
-        self.assertIsInstance(numpy_multi, list)
+        self.assertIsInstance(numpy_multi, np.ndarray)
         self.assertEqual(len(numpy_multi), 3)
 
 

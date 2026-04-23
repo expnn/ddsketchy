@@ -162,32 +162,31 @@ impl DDSketch {
     ///   iterated or converted to f64.
     fn quantile<'py>(&self, py: Python<'py>, q: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
         // Batch mode: try to extract as numpy array (zero-copy) first
-        if let Ok(arr) = q.extract::<PyReadonlyArray1<f64>>() {
+        let results = if let Ok(arr) = q.extract::<PyReadonlyArray1<f64>>() {
             let view = arr.as_array();
 
             // Check if we can get a contiguous slice
-            return if let Some(slice) = view.as_slice() {
+            if let Some(slice) = view.as_slice() {
                 // True zero-copy: pass slice directly, no copying at all
-                let results = self.inner.quantile_batch(slice).map_err(PyErr::from)?;
-                Ok(results.into_pyobject(py)?.into_any())
+                self.inner.quantile_batch(slice).map_err(PyErr::from)?
             } else {
                 // Non-contiguous array: iterate directly without intermediate Vec
-                let results = self
-                    .inner
-                    .quantile_batch(view.iter().map(|&x| x))
-                    .map_err(PyErr::from)?;
-                Ok(results.into_pyobject(py)?.into_any())
+                self.inner
+                    .quantile_batch(view.iter())
+                    .map_err(PyErr::from)?
             }
         } else if let Ok(q_value) = q.extract::<f64>() {
             // Try to extract as a single f64 first
             // Single quantile mode
-            let result = self.inner.quantile(q_value).map_err(PyErr::from)?;
-            return Ok(result.into_pyobject(py)?.into_any());
-        }
+            let r = self.inner.quantile(q_value).map_err(PyErr::from)?;
+            return Ok(r.into_pyobject(py)?.into_any());
+        } else {
+            // Fallback path: Extract as Vec<f64> (requires copying from Python list)
+            let quantiles_vec: Vec<f64> = q.extract()?;
+            self.inner.quantile_batch(&quantiles_vec).map_err(PyErr::from)?
+        };
 
-        // Fallback path: Extract as Vec<f64> (requires copying from Python list)
-        let quantiles_vec: Vec<f64> = q.extract()?;
-        let results = self.inner.quantile_batch(&quantiles_vec).map_err(PyErr::from)?;
+        let results = PyArray1::from_vec(py, results);
         Ok(results.into_pyobject(py)?.into_any())
     }
 
