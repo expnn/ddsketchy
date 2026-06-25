@@ -68,7 +68,7 @@ class DDSketch:
         """
         ...
 
-    def quantile(self, q: Union[float, Iterable[float], NDArray[np.float64]]) -> Union[float, list[float]]:
+    def quantile(self, q: Union[float, Iterable[float], NDArray[np.float64]]) -> NDArray[np.float64]:
         """Estimate the value(s) at the given quantile(s).
 
         When called with a single float, returns a single float result::
